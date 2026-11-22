@@ -1,0 +1,49 @@
+name: Execute UN immigration notebook
+on:
+  push:
+    paths:
+      - 'UN_Immigration_Assignment/*.ipynb'
+      - 'UN_Immigration_Assignment/*.csv'
+      - '.github/workflows/execute-immigration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install pandas nbformat nbclient ipykernel openpyxl requests
+      - name: Execute complete notebook
+        working-directory: UN_Immigration_Assignment
+        run: |
+          python - <<'PY'
+          import nbformat
+          from nbclient import NotebookClient
+          from pathlib import Path
+          path = Path("UN_Immigration_DataFrame_Transformation.ipynb")
+          nb = nbformat.read(path, as_version=4)
+          nb = NotebookClient(nb, timeout=180, kernel_name="python3", resources={"metadata":{"path":str(Path.cwd())}}).execute()
+          assert all(cell.execution_count is not None for cell in nb.cells if cell.cell_type == "code")
+          # Reject the five-row preview; the notebook must load the complete source data.
+          outputs = "\n".join("".join(o.get("text", "")) for cell in nb.cells if cell.cell_type=="code" for o in cell.get("outputs",[]) if o.output_type=="stream")
+          assert "COMPLETE DATASET:" in outputs, outputs
+          assert "DEMONSTRATION ONLY" not in outputs, outputs
+          nbformat.write(nb, path)
+          print(outputs[:1800])
+          PY
+      - name: Commit executed notebook
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add UN_Immigration_Assignment/UN_Immigration_DataFrame_Transformation.ipynb
+          if ! git diff --cached --quiet; then
+            git commit -m "Execute full UN immigration notebook"
+            git push
+          fi
