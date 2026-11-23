@@ -1,0 +1,59 @@
+name: Publish executed Fraud EDA notebook and PDF
+on:
+  push:
+    paths:
+      - 'Fraud_Detection_EDA/generate_notebook.py'
+      - '.github/workflows/fraud-eda-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install EDA and PDF dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas matplotlib seaborn scipy nbformat nbclient nbconvert ipykernel weasyprint
+      - name: Generate, execute and export
+        working-directory: Fraud_Detection_EDA
+        run: |
+          python generate_notebook.py
+          python - <<'PY'
+          import nbformat
+          from nbclient import NotebookClient
+          from nbconvert import HTMLExporter
+          from weasyprint import HTML
+          from pathlib import Path
+          f=Path('Credit_Card_Fraud_EDA.ipynb')
+          nb=nbformat.read(f,as_version=4)
+          nb=NotebookClient(nb,timeout=720,kernel_name='python3',resources={'metadata':{'path':str(Path.cwd())}}).execute()
+          assert all(x.execution_count is not None for x in nb.cells if x.cell_type=='code')
+          assert all(not any(o.output_type=='error' for o in x.get('outputs',[])) for x in nb.cells if x.cell_type=='code')
+          text=' '.join(''.join(o.get('text',[])) for x in nb.cells if x.cell_type=='code' for o in x.get('outputs',[]) if o.output_type=='stream')
+          assert 'FULL dataset loaded: (284807, 31)' in text,text[:2000]
+          assert 'VALIDATED: full dataset, EDA only, nine figures.' in text,text[-1200:]
+          nbformat.write(nb,f)
+          converter=HTMLExporter()
+          converter.embed_images=True
+          html,_=converter.from_notebook_node(nb)
+          HTML(string=html,base_url=str(Path.cwd())).write_pdf('Credit_Card_Fraud_EDA.pdf')
+          assert Path('Credit_Card_Fraud_EDA.pdf').stat().st_size>100000
+          print('Completed notebook and PDF:',f.stat().st_size,Path('Credit_Card_Fraud_EDA.pdf').stat().st_size)
+          PY
+      - name: Commit deliverables
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Fraud_Detection_EDA/Credit_Card_Fraud_EDA.ipynb Fraud_Detection_EDA/Credit_Card_Fraud_EDA.pdf
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish fully executed fraud EDA notebook and PDF printout"
+            git push
+          fi
