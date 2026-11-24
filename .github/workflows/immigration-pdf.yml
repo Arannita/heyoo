@@ -1,0 +1,50 @@
+name: Export immigration notebook PDF
+on:
+  push:
+    paths:
+      - '.github/workflows/immigration-pdf.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install nbformat nbconvert weasyprint
+      - name: Export existing fully executed notebook to PDF
+        working-directory: UN_Immigration_Assignment
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import nbformat
+          from nbconvert import HTMLExporter
+          from weasyprint import HTML
+          src=Path("UN_Immigration_DataFrame_Transformation.ipynb")
+          nb=nbformat.read(src,as_version=4)
+          code=[c for c in nb.cells if c.cell_type=="code"]
+          assert all(c.execution_count is not None for c in code)
+          assert all(not any(o.output_type=="error" for o in c.get("outputs",[])) for c in code)
+          streams=" ".join("".join(o.get("text",[])) for c in code for o in c.get("outputs",[]) if o.output_type=="stream")
+          assert "COMPLETE DATASET: Canada_UN_immigration.csv" in streams
+          assert "Transformed DataFrame shape: (195, 38)" in streams
+          exporter=HTMLExporter()
+          exporter.embed_images=True
+          html,_=exporter.from_notebook_node(nb)
+          output=Path("UN_Immigration_DataFrame_Transformation.pdf")
+          HTML(string=html,base_url=str(Path.cwd())).write_pdf(output)
+          assert output.stat().st_size>10000
+          print("Verified PDF:",output,output.stat().st_size)
+          PY
+      - name: Publish PDF
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add UN_Immigration_Assignment/UN_Immigration_DataFrame_Transformation.pdf
+          if ! git diff --cached --quiet; then
+            git commit -m "Add verified immigration notebook PDF printout"
+            git push
+          fi
